@@ -43,6 +43,13 @@
  * 7. It remembers progress (per account, per mode) in localStorage, so
  *    closing the tab and pasting the script again later just continues.
  *
+ * SWITCHING AWAY FROM THE TAB
+ * It's fine to switch to another tab or another browser entirely (e.g.
+ * Edge running this while you use Chrome) — the script detects that the
+ * tab is hidden and waits longer for each step to confirm before deciding
+ * something went wrong, since backgrounded tabs render updates slower.
+ * What it can't survive: closing the tab/browser, or the computer sleeping.
+ *
  * IF IT STOPS ITSELF / SEEMS BROKEN
  * If the console shows "could not find the like/favorite button" or
  * "click didn't seem to do anything", TikTok's markup likely shifted, or
@@ -126,9 +133,20 @@
     LONG_BREAK_MAX_MS: 35000,
 
     // How long to wait for the video overlay to open after clicking a
-    // thumbnail, and after clicking like/favorite, before double-checking.
+    // thumbnail, and after clicking like/favorite, before giving up and
+    // deciding it didn't work. These are polled (checked repeatedly, not
+    // slept-then-checked-once), and the *_HIDDEN_MS variants are used
+    // instead when the tab is backgrounded/minimized — browsers slow down
+    // how fast a page's own visual updates commit while hidden, so a short
+    // fixed wait can look like "nothing happened" when it's really just
+    // running behind. Waiting longer in that case still correctly catches
+    // a genuine failure (e.g. an actual CAPTCHA), it just also tolerates
+    // being backgrounded instead of false-alarming on it.
     OVERLAY_WAIT_MS: 1500,
-    POST_CLICK_WAIT_MS: 900,
+    OVERLAY_WAIT_HIDDEN_MS: 8000,
+    POST_CLICK_WAIT_MS: 1200,
+    POST_CLICK_WAIT_HIDDEN_MS: 6000,
+    POLL_INTERVAL_MS: 300,
 
     // Selector candidates, tried in order, for the like/favorite button
     // inside the opened video overlay. Add more here if TikTok changes
@@ -152,8 +170,10 @@
 
     // How far to scroll (px) when no unprocessed videos are visible.
     SCROLL_STEP_PX: window.innerHeight * 2.5,
-    // Give the grid time to lazy-load after a scroll.
+    // Give the grid time to lazy-load after a scroll (longer when hidden,
+    // same reasoning as the *_HIDDEN_MS waits above).
     SCROLL_WAIT_MS: 1800,
+    SCROLL_WAIT_HIDDEN_MS: 5000,
     // If scrolling this many times in a row doesn't reveal anything new,
     // assume we've reached the end of the list.
     MAX_EMPTY_SCROLLS: 4,
@@ -259,9 +279,24 @@
     return el.closest('button, [role="button"], [tabindex]') || el;
   }
 
+  // Polls `check` until it returns true or `timeoutMs` elapses, instead of
+  // sleeping a fixed amount and checking once — so a slow (e.g. backgrounded
+  // tab) update is still caught as soon as it actually happens.
+  async function pollUntil(check, timeoutMs) {
+    const start = Date.now();
+    for (;;) {
+      if (check()) return true;
+      if (Date.now() - start >= timeoutMs) return check();
+      await sleep(CONFIG.POLL_INTERVAL_MS);
+    }
+  }
+
   async function waitForOverlay() {
-    await sleep(CONFIG.OVERLAY_WAIT_MS);
-    return /\/video\//.test(location.pathname) || !!queryFirstVisible(CONFIG.CLOSE_SELECTORS);
+    const timeout = document.hidden ? CONFIG.OVERLAY_WAIT_HIDDEN_MS : CONFIG.OVERLAY_WAIT_MS;
+    return pollUntil(
+      () => /\/video\//.test(location.pathname) || !!queryFirstVisible(CONFIG.CLOSE_SELECTORS),
+      timeout
+    );
   }
 
   function closeOverlay() {
@@ -311,10 +346,14 @@
       log(`[dry run] Would click ${CONFIG.MODE} button for video ${id}.`);
     } else {
       findClickTarget(actionEl).click();
-      await sleep(CONFIG.POST_CLICK_WAIT_MS);
 
-      const after = document.contains(actionEl) ? actionEl.outerHTML : queryFirstVisible(selectors)?.outerHTML;
-      if (after === before) {
+      const timeout = document.hidden ? CONFIG.POST_CLICK_WAIT_HIDDEN_MS : CONFIG.POST_CLICK_WAIT_MS;
+      const changed = await pollUntil(() => {
+        const current = document.contains(actionEl) ? actionEl.outerHTML : queryFirstVisible(selectors)?.outerHTML;
+        return current !== before;
+      }, timeout);
+
+      if (!changed) {
         warn(`Video ${id}: click didn't seem to change anything. Stopping so nothing gets clicked blindly — this often means a CAPTCHA/verification popup appeared, or the selectors went stale. Check the tab.`);
         closeOverlay();
         return 'stop';
@@ -343,7 +382,7 @@
         }
         log('No unprocessed videos visible, scrolling to load more...');
         window.scrollBy(0, CONFIG.SCROLL_STEP_PX);
-        await sleep(CONFIG.SCROLL_WAIT_MS);
+        await sleep(document.hidden ? CONFIG.SCROLL_WAIT_HIDDEN_MS : CONFIG.SCROLL_WAIT_MS);
         continue;
       }
       emptyScrolls = 0;

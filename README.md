@@ -66,9 +66,12 @@ resumable progress) but can't eliminate it.
    ```js
    window.__ttBulkStop = true
    ```
-10. You can minimize the browser window or switch to another tab and it
-    keeps running fine — Chrome/Edge only throttle background tabs down to
-    roughly once-per-second timers, well within the script's delays. What
+10. You can minimize the browser, switch tabs, or switch to a completely
+    different browser (e.g. run this in Edge while you use Chrome for
+    everything else) and it keeps working — when it detects the tab is
+    hidden, it automatically waits longer at each step before deciding
+    something's actually wrong, since backgrounded tabs render updates
+    slower and a short wait can otherwise look like a false failure. What
     it can't survive: closing the tab, closing the browser, or the
     computer going to sleep (screen lock alone is usually fine; actual
     sleep/hibernate pauses everything, including the cooldown timer).
