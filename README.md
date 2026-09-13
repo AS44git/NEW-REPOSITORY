@@ -66,15 +66,36 @@ resumable progress) but can't eliminate it.
    ```js
    window.__ttBulkStop = true
    ```
-10. You can minimize the browser, switch tabs, or switch to a completely
-    different browser (e.g. run this in Edge while you use Chrome for
-    everything else) and it keeps working — when it detects the tab is
-    hidden, it automatically waits longer at each step before deciding
-    something's actually wrong, since backgrounded tabs render updates
-    slower and a short wait can otherwise look like a false failure. What
-    it can't survive: closing the tab, closing the browser, or the
-    computer going to sleep (screen lock alone is usually fine; actual
-    sleep/hibernate pauses everything, including the cooldown timer).
+10. Minimizing the browser, switching tabs, or switching to a completely
+    different browser all hide the tab from TikTok's own page — and
+    TikTok appears to close its own video overlay whenever that happens
+    (likely to save resources, common for video-heavy sites). That's not
+    something a script can wait past, so rather than risk a false "stuck"
+    alarm, the script detects this and **pauses** (no notification, no
+    progress lost) until the tab is visible again, then keeps going on its
+    own. In practice: it won't make progress while fully hidden, but it
+    also won't false-alarm you for it — just bring the window back into
+    view (it doesn't need to be the *focused* window, just not minimized
+    and not fully covered by another window — e.g. Windows Snap it to one
+    side of the screen while you use another app on the other side) and it
+    resumes right away. What it can't survive at all: closing the tab or
+    browser, or the computer going to sleep.
+
+### Keeping it actually making progress unattended
+
+Because of the pause-when-hidden behavior above, "unattended" here means
+**visible but not necessarily focused**, not minimized. Practical setups
+that work:
+- Snap the browser window to one half of the screen (Windows: drag to the
+  edge, or `Win + Left/Right Arrow`) and use other apps on the other half
+  or a second monitor — the tab stays visible, so it keeps running, even
+  though it's not the focused window.
+- Leave it as a small window in a corner of the screen instead of
+  minimizing it.
+
+What won't work: minimizing the window, or letting another maximized
+window fully cover it — either one pauses it until you bring it back into
+view.
 
 ### Editing the daily cap or cooldown mid-project
 

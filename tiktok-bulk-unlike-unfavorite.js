@@ -43,12 +43,18 @@
  * 7. It remembers progress (per account, per mode) in localStorage, so
  *    closing the tab and pasting the script again later just continues.
  *
- * SWITCHING AWAY FROM THE TAB
- * It's fine to switch to another tab or another browser entirely (e.g.
- * Edge running this while you use Chrome) — the script detects that the
- * tab is hidden and waits longer for each step to confirm before deciding
- * something went wrong, since backgrounded tabs render updates slower.
- * What it can't survive: closing the tab/browser, or the computer sleeping.
+ * SWITCHING AWAY FROM THE TAB / MINIMIZING
+ * TikTok appears to close its own video overlay whenever the tab becomes
+ * hidden (minimized, covered by another window, or you switch to another
+ * tab/browser) — this is TikTok's own page behavior, not something a
+ * script can wait past. So rather than risk a false "stuck" alarm, the
+ * script detects this and just PAUSES — no notification, no progress
+ * lost — until the tab is visible again, then resumes automatically on
+ * its own. It won't make progress while fully hidden, but you also won't
+ * get spurious stops from it; just bring the window back into view
+ * (doesn't need to be the focused window, just not minimized/covered) and
+ * it picks up right away. What it can't survive at all: closing the tab
+ * or browser, or the computer sleeping.
  *
  * IF IT STOPS ITSELF / SEEMS BROKEN
  * If the console shows "could not find the like/favorite button" or
@@ -291,6 +297,22 @@
     }
   }
 
+  // TikTok appears to tear down its own video overlay when the tab is
+  // hidden (common for video-heavy sites, to save resources on blur) —
+  // waiting longer doesn't help with that, since the button is genuinely
+  // gone, not just slow to render. So instead of attempting new videos
+  // while hidden and risking a false "stuck" verdict, just pause here
+  // until the tab is visible again, then resume automatically.
+  async function waitWhileHidden() {
+    if (!document.hidden) return;
+    log('Tab is hidden (minimized or covered) — pausing until it\'s visible again. No progress is lost; it resumes on its own.');
+    while (document.hidden) {
+      if (window.__ttBulkStop) return;
+      await sleep(2000);
+    }
+    log('Tab visible again — resuming.');
+  }
+
   async function waitForOverlay() {
     const timeout = document.hidden ? CONFIG.OVERLAY_WAIT_HIDDEN_MS : CONFIG.OVERLAY_WAIT_MS;
     return pollUntil(
@@ -372,6 +394,9 @@
     let emptyScrolls = 0;
 
     while (actionsThisBatch < target) {
+      if (window.__ttBulkStop) return { actionsThisBatch, hardStop: false, finished: false, stoppedManually: true };
+
+      await waitWhileHidden();
       if (window.__ttBulkStop) return { actionsThisBatch, hardStop: false, finished: false, stoppedManually: true };
 
       const candidates = getGridAnchors();
