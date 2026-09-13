@@ -47,6 +47,15 @@ resumable progress) but can't eliminate it.
 For a large library, spread batches across multiple sessions/days rather
 than running it once with a huge `MAX_ACTIONS_PER_RUN`.
 
+## "Overlay did not open" / stuck repeating the same video
+
+Some liked/favorited posts are TikTok's photo-slideshow format (images +
+audio, no video player). Clicking those never opens the normal video
+overlay, so the script can't unlike/unfavorite them automatically — after
+a couple of retries it gives up on that one item and moves on to the next.
+That post just needs to be handled by hand. This is expected behavior, not
+a sign that something's broken with your account.
+
 ## If TikTok changes its page and the script stops finding buttons
 
 TikTok updates its markup periodically. The script tries several known

@@ -49,6 +49,13 @@
  *     choose Inspect, and look for an attribute like data-e2e="something".
  *   - Add that selector string to the LIKE_SELECTORS or FAVORITE_SELECTORS
  *     array near the top of CONFIG below, then re-run.
+ *
+ * If it instead logs "overlay didn't open... likely a photo/carousel post",
+ * that's not a bug — some liked/favorited posts are TikTok's photo-slideshow
+ * format (images + audio, no video player), so clicking them never opens
+ * the normal video overlay. The script gives up on that one item after a
+ * couple of tries and moves on; it just means that particular post wasn't
+ * unliked/unfavorited and you'd need to do it by hand.
  */
 (function () {
   'use strict';
@@ -110,6 +117,11 @@
     // If scrolling this many times in a row doesn't reveal anything new,
     // assume we've reached the end of the list.
     MAX_EMPTY_SCROLLS: 4,
+
+    // If a video's overlay fails to open this many times in a row, give up
+    // on it and permanently skip it (some liked/favorited posts are photo
+    // carousels or removed videos that never open the normal video player).
+    MAX_OPEN_ATTEMPTS: 2,
   };
 
   // ---------------------------------------------------------------------
@@ -124,6 +136,7 @@
 
   const storageKey = `tt_bulk_processed_${CONFIG.MODE}_${location.pathname.split('/')[1] || 'unknown'}`;
   const processed = new Set(JSON.parse(localStorage.getItem(storageKey) || '[]'));
+  const openAttempts = new Map();
 
   const log = (...args) => console.log('[tt-bulk]', ...args);
   const warn = (...args) => console.warn('[tt-bulk]', ...args);
@@ -186,7 +199,16 @@
 
     const opened = await waitForOverlay();
     if (!opened) {
-      warn(`Video ${id}: overlay did not open, skipping this one.`);
+      closeOverlay();
+      const attempts = (openAttempts.get(id) || 0) + 1;
+      openAttempts.set(id, attempts);
+      if (attempts >= CONFIG.MAX_OPEN_ATTEMPTS) {
+        warn(`Video ${id}: overlay didn't open after ${attempts} attempts (likely a photo/carousel post or a removed video that has no normal player). Giving up on it permanently and moving on — it was NOT unliked/unfavorited.`);
+        processed.add(id);
+        saveProgress();
+      } else {
+        warn(`Video ${id}: overlay did not open, will retry.`);
+      }
       return 'skip';
     }
 
