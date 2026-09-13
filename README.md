@@ -36,40 +36,79 @@ resumable progress) but can't eliminate it.
    - Consider setting `DRY_RUN: true` for a first run, so it logs what it
      *would* click without changing anything.
 6. Press Enter. The browser will likely ask for notification permission
-   for the tab — allow it, that's how the script reaches you without you
-   watching the console.
-7. With `AUTO_CONTINUE: true` (the default), it runs a batch (`BATCH_SIZE`
-   videos, default 40), cools down for a random 10–25 minutes, then runs
-   the next batch on its own — repeating until one of these happens, each
-   with a desktop notification:
-   - `DAILY_ACTION_CAP` is reached for the day (default 300, shared across
-     both like and favorite runs on the account, resets at local midnight),
-   - there's nothing left to process, or
-   - it hits something that looks like a CAPTCHA/verification wall or a
-     broken selector (a "hard stop" — see below).
-8. To stop it early at any point, type in the console:
+   for the tab — **allow it**, that's how the script reaches you without
+   you watching the console.
+7. Verify notifications actually work before walking away — type in the
+   console:
+   ```js
+   __ttBulkTestNotify()
+   ```
+   You should see a real desktop notification pop up (usually bottom-right
+   on Windows, top-right on Mac). If nothing appears: click the lock/info
+   icon left of the address bar → **Notifications → Allow** for the site,
+   and separately check your OS notification settings for the browser
+   itself (Windows Settings → Notifications, or macOS System Settings →
+   Notifications) — both have to allow it, or you'll get silence.
+8. With `AUTO_CONTINUE: true` (the default), it runs a batch (`BATCH_SIZE`
+   videos, default 40), cools down, then runs the next batch on its own —
+   repeating until one of these happens, each with its own distinctly
+   titled desktop notification so you know at a glance which one fired:
+   - **"TikTok bulk: daily cap reached"** — `DAILY_ACTION_CAP` hit for the
+     day (shared between like and favorite runs on the account), resets at
+     local midnight.
+   - **"TikTok bulk script needs you"** — a hard stop: a click had no
+     effect, usually a CAPTCHA/verification prompt or a broken selector.
+     Go look at the tab, this one needs you.
+   - **"TikTok bulk script finished"** — nothing left to process.
+   - **"TikTok bulk: batch done"** — only appears if you set
+     `AUTO_CONTINUE: false`.
+9. To stop it early at any point, type in the console:
    ```js
    window.__ttBulkStop = true
    ```
-9. You can leave the tab open in the background and walk away — just not
-   close the tab, close the browser, or let the computer sleep, since the
-   script only runs while that tab is alive.
+10. You can minimize the browser window or switch to another tab and it
+    keeps running fine — Chrome/Edge only throttle background tabs down to
+    roughly once-per-second timers, well within the script's delays. What
+    it can't survive: closing the tab, closing the browser, or the
+    computer going to sleep (screen lock alone is usually fine; actual
+    sleep/hibernate pauses everything, including the cooldown timer).
 
-### How many per day is safe?
+### Editing the daily cap or cooldown mid-project
 
-There's no published TikTok limit to aim for — `DAILY_ACTION_CAP: 300` is a
-conservative starting point, not a guarantee. A rough idea of the trade-off
-for a library around 8,500 likes + 4,225 favorites (~12,700 total):
+Just change the numbers in `CONFIG` before your next paste — `DAILY_ACTION_CAP`,
+`COOLDOWN_MIN_MS`/`COOLDOWN_MAX_MS`, `BATCH_SIZE`, etc. Your progress
+(which videos are done, and today's count) lives in `localStorage`, keyed
+to your account — it's untouched by editing these numbers, so you can
+raise or lower them between runs freely. If the script is already
+mid-run, stop it first (`window.__ttBulkStop = true`), then paste the
+edited version.
 
-| Daily cap | Rough time to clear everything |
+### How many per day, to finish in under 3 weeks
+
+There's no published TikTok limit to aim for — this is an estimate, not a
+guarantee. For ~8,500 likes + ~4,225 favorites (~12,700 total actions):
+
+| Daily cap (shared, likes+favorites) | Rough time to clear everything |
 |---|---|
-| 150/day | ~85 days |
-| 300/day (default) | ~42 days |
-| 600/day | ~21 days |
+| 300 (conservative starting point) | ~42 days |
+| 450 | ~28 days |
+| **650** | **~20 days** |
+| 900 | ~14 days |
 
-If several days pass with no CAPTCHAs or blocks, it's reasonable to raise
-`DAILY_ACTION_CAP`. If you hit a CAPTCHA, lower it back down and take a
-longer break before resuming.
+Recommended approach: start at the default `DAILY_ACTION_CAP: 300` for
+the first 2–3 days as a test. If nothing weird happens (no CAPTCHA, no
+"needs you" notification, no visible restriction on the account), raise it
+to around **650** — that lands you under 3 weeks — and keep an eye on the
+first day or two at the new level before trusting it fully. If a CAPTCHA
+or block ever shows up, drop back to something like 200–300 and give the
+account a day or two of rest before resuming.
+
+Note the cooldown (`COOLDOWN_MIN_MS`/`MAX_MS`, default 10–25 min between
+batches of 40) isn't really the bottleneck here — at that pace the script
+could burn through 650 actions in a few hours of wall-clock time. The
+daily cap is what actually controls your total exposure per day, so raising
+`DAILY_ACTION_CAP` is the lever that gets you done sooner; there's no need
+to shrink the cooldown too.
 
 ## "Overlay did not open" / stuck repeating the same video
 
@@ -97,30 +136,6 @@ selector:
 3. Add that selector string to `LIKE_SELECTORS` or `FAVORITE_SELECTORS` in
    the `CONFIG` block at the top of the script, then paste and run it
    again.
-
-## Favorited items that are unavailable but still count toward your total
-
-Some entries under Favorites (or Liked) point at content that's since been
-removed — a deleted video, or (under the Sounds/Effects sub-tabs) a sound
-or effect that's gone. These still count toward the number TikTok shows,
-but there's often no working overlay to open, so there's nothing for the
-script to click through the normal path.
-
-The script has a **best-effort, unverified** fallback for this: it looks
-for a "..." / more-options control directly on the grid tile and tries to
-click a "remove"-type entry in whatever menu appears, without opening the
-item. I can't confirm this control exists or is named the way the script
-guesses, since I don't have live access to TikTok's page. If the console
-logs that it couldn't find one:
-
-1. Hover over (or right-click) one of those unavailable tiles by hand and
-   see if a small "..." icon or similar appears.
-2. Right-click that control → **Inspect**, and note its `data-e2e`
-   attribute or class, and the text/attribute of the "remove" option in
-   whatever menu opens.
-3. Share that with whoever maintains this script so the selectors in
-   `MORE_OPTIONS_SELECTORS` / `REMOVE_MENU_KEYWORDS` can be tightened to
-   match.
 
 ## Disclaimer
 

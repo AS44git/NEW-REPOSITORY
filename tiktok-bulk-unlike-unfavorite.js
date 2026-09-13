@@ -45,23 +45,32 @@
  *
  * IF IT STOPS ITSELF / SEEMS BROKEN
  * If the console shows "could not find the like/favorite button" or
- * "click didn't seem to do anything", TikTok's markup likely shifted:
+ * "click didn't seem to do anything", TikTok's markup likely shifted, or
+ * a CAPTCHA/verification prompt appeared — check the tab. To fix a stale
+ * selector:
  *   - Open one liked video's overlay by hand, right-click the heart icon,
  *     choose Inspect, and look for an attribute like data-e2e="something".
  *   - Add that selector string to LIKE_SELECTORS / FAVORITE_SELECTORS
  *     below, then re-run.
  *
- * UNAVAILABLE ITEMS (deleted/removed videos, sounds, effects that still
- * count toward your favorites total but have no working overlay)
- * The script tries a best-effort fallback for these: look for a "..."
- * more-options control directly on the grid tile and click a "remove"-type
- * entry in its menu, without needing to open the item. This path is
- * UNVERIFIED — I can't see TikTok's live page from here, so I don't know
- * for certain such a control exists or what it's called. If the console
- * says it couldn't find one, right-click (or hover, then look for a small
- * "..." icon on) one of those unavailable tiles yourself, inspect whatever
- * control appears, and send me the data-e2e attribute or class you find —
- * I'll wire the script up to it specifically.
+ * Items with no working overlay (photo/carousel posts, or removed videos)
+ * get skipped automatically after a couple of tries — that's expected, not
+ * a bug. Unavailable/removed favorited sounds and effects are a separate,
+ * harder problem this script doesn't attempt yet.
+ *
+ * TESTING NOTIFICATIONS
+ * After pasting/running this script once (so the permission prompt has
+ * been answered), verify notifications actually reach your desktop by
+ * typing in the console:
+ *   __ttBulkTestNotify()
+ * If nothing appears, check both the site permission (click the lock/info
+ * icon left of the address bar → Notifications → Allow) and your OS-level
+ * notification settings for the browser itself (both have to allow it).
+ * Each real notification this script sends has its own distinct title so
+ * you can tell them apart at a glance: "TikTok bulk: daily cap reached",
+ * "TikTok bulk script needs you" (a hard stop — go look), "TikTok bulk
+ * script finished" (nothing left to process), and "TikTok bulk: batch
+ * done" (only shown if AUTO_CONTINUE is off).
  */
 (function () {
   'use strict';
@@ -140,16 +149,6 @@
       '[data-e2e="browse-close-icon"]',
       '[data-e2e="video-detail-close"]',
     ],
-
-    // Best-effort selectors for a per-tile "..." / more-options control,
-    // used only as a fallback for items whose overlay never opens. See the
-    // "UNAVAILABLE ITEMS" note above — unverified.
-    MORE_OPTIONS_SELECTORS: [
-      '[data-e2e="video-card-more"]',
-      '[data-e2e="more-icon"]',
-      '[data-e2e="user-post-item-more-icon"]',
-    ],
-    REMOVE_MENU_KEYWORDS: ['remove', 'delete', 'unfavorite', 'un-favorite'],
 
     // How far to scroll (px) when no unprocessed videos are visible.
     SCROLL_STEP_PX: window.innerHeight * 2.5,
@@ -232,6 +231,10 @@
     }
   }
 
+  // Run window.__ttBulkTestNotify() in the console any time to confirm
+  // notifications are actually reaching your desktop before a long run.
+  window.__ttBulkTestNotify = () => notify('TikTok bulk test', 'If you see this, notifications are working.');
+
   function extractVideoId(href) {
     const match = href && href.match(/\/video\/(\d+)/);
     return match ? match[1] : null;
@@ -273,54 +276,6 @@
     }
   }
 
-  // Best-effort, unverified fallback for items with no working overlay —
-  // see "UNAVAILABLE ITEMS" note at the top of the file.
-  function findMoreOptionsButton(tile) {
-    if (!tile) return null;
-    for (const sel of CONFIG.MORE_OPTIONS_SELECTORS) {
-      const el = tile.querySelector(sel);
-      if (el) return el;
-    }
-    return null;
-  }
-
-  function findRemoveMenuItem() {
-    const candidates = document.querySelectorAll(
-      '[role="menuitem"], [class*="menu"] li, [class*="Menu"] li, [class*="popover"] *, [class*="Popover"] *'
-    );
-    for (const el of candidates) {
-      const text = (el.textContent || '').trim().toLowerCase();
-      if (text && text.length < 40 && CONFIG.REMOVE_MENU_KEYWORDS.some((k) => text.includes(k))) {
-        return el;
-      }
-    }
-    return null;
-  }
-
-  async function tryRemoveFromGridDirectly(anchor, id) {
-    const tile = anchor.closest('div[class], li[class]') || anchor.parentElement;
-    tile?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-    tile?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-    await sleep(400);
-
-    const moreBtn = findMoreOptionsButton(tile);
-    if (!moreBtn) return false;
-    findClickTarget(moreBtn).click();
-    await sleep(500);
-
-    const removeItem = findRemoveMenuItem();
-    if (!removeItem) return false;
-
-    if (CONFIG.DRY_RUN) {
-      log(`[dry run] Would click the grid "remove" option for unavailable item ${id}.`);
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      return true;
-    }
-    findClickTarget(removeItem).click();
-    await sleep(500);
-    return true;
-  }
-
   async function processOne(anchor) {
     const id = extractVideoId(anchor.getAttribute('href') || '');
     log(`Opening video ${id}...`);
@@ -333,12 +288,7 @@
       const attempts = (openAttempts.get(id) || 0) + 1;
       openAttempts.set(id, attempts);
       if (attempts >= CONFIG.MAX_OPEN_ATTEMPTS) {
-        const removed = await tryRemoveFromGridDirectly(anchor, id).catch(() => false);
-        if (removed) {
-          log(`Video ${id}: removed via the grid's "more options" menu (best-effort path — please double-check it actually disappeared).`);
-        } else {
-          warn(`Video ${id}: overlay never opened and no "more options" remove control was found either. Likely unavailable content (photo/carousel, or a removed video/sound/effect) this script can't clear automatically. Giving up on it and moving on — see the "UNAVAILABLE ITEMS" note at the top of this file.`);
-        }
+        warn(`Video ${id}: overlay didn't open after ${attempts} attempts (likely a photo/carousel post or a removed video that has no normal player). Giving up on it permanently and moving on — it was NOT unliked/unfavorited.`);
         processed.add(id);
         saveProgress();
       } else {
